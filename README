@@ -1,0 +1,314 @@
+//////////////////////////////
+// Tiny Media Center Server //
+//////////////////////////////
+
+
+THIS PROJECT IS IN AN EARLY STAGE OF DEVELOPMENT. THE PROTOCOL AND THE SERVER
+IMPLEMENTATION ARE SUBJECT TO CHANGE.
+THE PURPOSE OF THE CURRENT RELEASE IS TO COORDINATE THE DEVELOPMENT OF A CLIENT.
+
+
+General
+-------
+
+The purpose of this project is to provide an interface with which you can remote
+control the playback of music, movies, images, games and other media.
+It is not a streaming service, the data must be made available to the server in
+advance.
+
+To start the server, pass the directory paths, that contain playable items, as
+arguments, i.e.:
+./server /home/pi/media/ /mnt/usb/
+
+The server listens on port 5001 by default.
+The administrator key that must be used for some of the server commands is
+"admin" by default.
+
+
+Design
+------
+
+The main goal is to create a minimal implementation of a media center server for
+the Raspberry Pi, with a simple protocol that can be implemented easily by any
+client. You can also use netcat to control the server.
+The implementation is kept deliberately minimal and needs to be extended for
+specific use-cases.
+
+The communication with the server is done via TCP/IP. For each command that is
+sent to the server, a new connection has to be established. This allows the
+server to handle multiple clients without adding too much complexity. Also, the
+low rate at which the commands will be issued by the client does no warrant a
+keep-alive connection.
+
+The protocol contains a few simple commands which take space separated
+arguments.
+The server response is similar to an HTTP response. It includes a header with
+the protocol version, a status code and a message. It may also contain a body of
+data, typically an XML-formatted string.
+For more information read the section that deals specifically with the protocol.
+
+All items have a unique ID that will remain the same as long as the file is in
+the same directory and the file name does not change. This way the client only
+needs to refresh its buffered list of items when a new version of the item list
+is available. Chances are that even then, the IDs will work as long as the files
+have not been deleted from the server.
+
+The server is capable of listing the playable items, returning information about
+a specific item, executing a binary that can replay the requested item,
+forwarding control messages to the processes playing the item, and stopping the
+replay of the item.
+
+
+Configuration
+-------------
+
+The server can be configured by editing and compiling the source code.
+
+The most important part of the configuration is the type, extension, and binary
+block of #define-statements of the main header file (see mcs.h).
+The types are separated into different categories and sub-categories.
+Sub-categories are used when there are specific binaries for a subset of
+extensions, i.e. you can configure the server to recognize the file extensions
+.gb, .gbc, .nes, and .smc as playable emulator files, but you have to be able to
+tell the server that .nes files are executed with FCEU specifically.
+ 
+Categories also come into play when requesting a list of items from a specific
+type. If you want to know all the available ROM files then you should pass the
+ID of the ROM category. If you want to know all the available NES games, then
+you should pass the ID of the sub-category NES-roms.
+
+The file extensions specify which files to include in the list of items that are
+"playable". The extensions are separated with a ':' character. The first and
+last characters of the string must also be ':', i.e. ":avi:flv:mp4:".
+The mapping between extensions and types is hardcoded in MCS_getItemType().
+The mapping between types and binaries is hardcoded in MCS_handlePlayItem().
+
+There are two ways to extend the capabilities of the server:
+1. You can add new #define-statements and code that deals with new extensions.
+2. You can provide a script or tool that will be executed when the file
+   extension is unkown. The tool will be given the file path as an argument.
+
+
+Compiler Options
+----------------
+
+MCS_DEBUG - Compile with additional debugging functions and calls
+MCS_TAGLIB - Compile with TagLib dependencies
+
+Options are either added to the source code with #define or with the gcc option
+-D.
+
+See the makefile for sensible configurations.
+
+
+Dependencies
+------------
+
+TagLib is used for getting tag information of media files (if available). The
+server is compiled with TagLib dependencies if you #define MCS_TAGLIB in the
+source or compile the source with the option -DMCS_TAGLIB.
+See libtag, libtagc (C binding).
+
+
+Protocol (Version 0.1)
+----------------------
+
+IMPORTANT:
+The protocol is still in a very early stage and might change!
+
+The server response is losely based on the HTTP set of responses.
+All replies include a header with the protocol version, a status code and a
+message, indicating if the execution of the command was successful or not.
+Commands that require a more complex answer will also contain a body of data.
+The contents of the body is typically an XML-formatted string.
+
+The body and header are separated by an empty line.
+
+Example:
+MCP/0.1 200 OK
+
+<mediacenter>
+...
+</mediacenter>
+
+
+Commands
+--------
+
+Command
+    CTRL c
+Implementation
+    MCS_handleRequest
+Description
+    Sends a message to the child process. This has the same effect as running  
+    the child process in a terminal and pressing a key on the keyboard. The
+    argument is one single character.
+
+    Example:
+    Sending "CTRL -" will cause omxplayer to lower its volume.
+    Sending "CTRL  " will cause omxplayer to pause.
+
+
+Command
+    INFO id
+Implementation
+    MCS_sendInfo
+Description
+    Returns information about a certian item. In the case of an audio file this
+    may include for example the ID3 data (artist, album, year, etc.)
+Returns
+    XML-formatted string
+
+    Example:
+    <mediacenter>
+        <item id="2" type="100" name="Into the woods.mp3">
+            <tag>
+                <title>Into the woods</title>
+                <artist>The Kyoto Connection</artist>
+                <album>The Kyoto Connection II</album>
+                <year>2008</year>
+                <track>1</track>
+                <genre>Blues</genre>
+            </tag>
+            <properties>
+                <bitrate>206</bitrate>
+                <samplerate>44100</samplerate>
+                <channels>2</channels>
+                <length>104</length>
+            </properties>
+        </item>
+    </mediacenter>
+Comment
+    This request will only return information if the server was compiled with
+    the compile option MCS_TAGLIB.
+    Ideally this command should only be sent to get information about an item
+    before it is played, when the user explicitely requests it, i.e. by
+    selecting  an item, or while the item is playing.
+
+
+Command
+    LIST type offset length
+Implementation
+    MCS_sendItems
+Description:
+    Lists playable items on the server.
+    
+    Arguments:
+    type - the type ID of the items (audio/video/rom/etc.) (0 for all)
+    offset - the item list offset (offset >= 0)
+    length - number of items that should be returned at most (length > 0)
+Returns
+    XML-formatted string
+
+    The items-tag contains a version-attribute that can indicate changes in the
+    list, and a size-attribute that tells you the number of items.
+
+    Example:
+    <mediacenter>
+        <items version="1" type="100" offset="1" length="10">
+            <item id="1" type="100" name="Storm.ogg"/>
+            <item id="2" type="100" name="Into the Woods.mp3"/>
+        </items>
+    </mediacenter>
+
+
+Command
+    PLAY id
+Implementation
+    MCS_handleRequest
+Description
+    Plays the item with the given ID
+
+
+Command
+    RESTART admin_key
+Implementation
+    MCS_handleRequest
+Description
+    RESTART will rebuild the item list.
+Comment
+    RESTART is an administrative command. You need to provide an admin key.
+    The default key is "admin".
+
+
+Command
+    SHUTDOWN admin_key
+Implementation
+    MCS_handleRequest
+Description
+    Kills the child process and closes the server.
+Comment
+    SHUTDOWN is an administrative command. You need to provide an admin key.
+    The default key is "admin".
+
+
+Command
+    STAT
+Implementation
+    MCS_sendStatus
+Description
+    Returns information about the server.
+Returns
+    XML-formatted string
+
+    Example:
+    <mediacenter>
+        <status>
+            <items version="1" size="3"/>
+            <types>
+                <type id="100" name="audio"/>
+                <type id="200" name="rom"/>
+                <type id="300" name="video"/>
+            </types>
+        </status>
+    </mediacenter>
+
+
+Command
+    STOP
+Implementation
+    MCS_handleRequest
+Description
+    Stops the currently playing item. This includes killing the child process
+    that is executing the video player/audio player/etc. binary.
+    You always need to send a STOP when you are finished with an item.
+    If unsure, send a STOP before the next PLAY.
+
+
+Status Codes
+------------
+
+Message                     Command
+
+200 OK                      any
+400 Client Error
+401 Bad Request             any unknown or incomplete request
+402 Bad Parameters          INFO, LIST, PLAY
+403 Unauthorized            RESTART, SHUTDOWN
+500 Server Error            CTRL, INFO, PLAY, STOP
+501 Item Already Playing    PLAY
+502 Not Found               INFO, PLAY
+503 Message Too Long        INFO, LIST
+504 Not Implemented         any
+
+
+Usage
+-----
+
+This is an example to illustrate the communication with the server from a client
+perspective.
+
+1. Call STAT to retrieve information about the server if necessary.
+2. Call LIST to retrieve a list of playable items.
+3. Call INFO to get more information about an item.
+4. Call PLAY to play the item.
+5. Call CTRL to pass commands directly to the player while the item is playing. 
+6. Call STOP to stop the replay of the item.
+7. Call SHUTDOWN to stop server.
+
+
+License
+-------
+
+Please see the LICENSE file for more information.
+
