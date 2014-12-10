@@ -20,7 +20,7 @@ To start the server, pass the directory paths, that contain playable items, as
 arguments, i.e.:
 ./server /home/pi/media/ /mnt/usb/
 
-The server listens on port 5001 by default.
+The server listens on port 5002 by default.
 The administrator key that must be used for some of the server commands is
 "admin" by default.
 
