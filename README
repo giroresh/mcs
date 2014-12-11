@@ -161,7 +161,7 @@ Returns
 
     Example:
     <mediacenter>
-        <item id="2" type="100" name="Into the woods.mp3">
+        <item id="2" type="100" label="Into the woods.mp3">
             <tag>
                 <title>Into the woods</title>
                 <artist>The Kyoto Connection</artist>
@@ -206,8 +206,8 @@ Returns
     Example:
     <mediacenter>
         <items version="1" type="100" offset="1" length="10">
-            <item id="1" type="100" name="Storm.ogg"/>
-            <item id="2" type="100" name="Into the Woods.mp3"/>
+            <item id="1" type="100" label="Storm.ogg"/>
+            <item id="2" type="100" label="Into the Woods.mp3"/>
         </items>
     </mediacenter>
 

@@ -10,11 +10,11 @@ int MCS_sendTagLibInfo(struct MCS_Item* item, int clientSocket) {
 	int plen = snprintf(buffp, SIZE,
 			"%s\n\n"
 			"<mediacenter>"
-			"<item id=\"%d\" type=\"%d\" name=\"%s\">",
+			"<item id=\"%d\" type=\"%d\" label=\"%s\">",
 			MCS_MSG_OK, item->id, item->type, item->label);
 	
 	if (plen < 0) {
-		printf("Error writing to buffer\n");
+		printf("MCS_sendTagLibInfo: Error writing to buffer\n");
 		exit(1);
 	}
 
@@ -54,7 +54,7 @@ int MCS_sendTagLibInfo(struct MCS_Item* item, int clientSocket) {
 					taglib_tag_genre(tag));
 			
 			if (plen < 0) {
-				printf("MCS_sendInfo: Error writing to buffer (1)\n");
+				printf("MCS_sendTagLibInfo: Error writing to buffer (1)\n");
 				exit(1);
 			}
 
@@ -78,7 +78,7 @@ int MCS_sendTagLibInfo(struct MCS_Item* item, int clientSocket) {
 					taglib_audioproperties_length(properties));
 			
 			if (plen < 0) {
-				printf("MCS_sendInfo: Error writing to buffer (2)\n");
+				printf("MCS_sendTagLibInfo: Error writing to buffer (2)\n");
 				exit(1);
 			}
 
@@ -98,7 +98,7 @@ int MCS_sendTagLibInfo(struct MCS_Item* item, int clientSocket) {
 			"</item></mediacenter>");
 
 	if (plen < 0) {
-		printf("Error writing to buffer\n");
+		printf("MCS_sendTagLibInfo: Error writing to buffer\n");
 		exit(1);
 	}
 
@@ -106,7 +106,7 @@ int MCS_sendTagLibInfo(struct MCS_Item* item, int clientSocket) {
 
 	if (buffp > buffend) {
 		write(clientSocket, MCS_MSG_TOO_LONG, strlen(MCS_MSG_TOO_LONG));
-		printf("MCS_sendInfo: Buffer too small\n");
+		printf("MCS_sendTagLibInfo: Buffer too small\n");
 		free(buffer);
 		return -1;
 	}
@@ -117,7 +117,7 @@ int MCS_sendTagLibInfo(struct MCS_Item* item, int clientSocket) {
 			buffend - buffp);
 #endif
 	if (write(clientSocket, buffer, buffp - buffer) < 0) {
-		printf("Error writing to socket.\n");
+		printf("MCS_sendTagLibInfo: Error writing to socket.\n");
 		exit(1);
 	}
 

@@ -6,8 +6,7 @@
 
 #ifdef MCS_DEBUG
 int MCS_checkIDs(struct MCS_Item** items, int numItems) {
-	int i;
-	int j;
+	int i, j;
 	for (i = 0; i < numItems - 1; i++) {
 		for (j = i + 1; j < numItems; j++) {
 			if (items[i]->id == items[j]->id) {
@@ -176,18 +175,18 @@ int MCS_handlePlayItem(struct MCS_Context* mcc, struct MCS_Item* item) {
 	}
 
 	// create a pipe so that we can pass commands to the child process
-    // see http://tldp.org/LDP/lpg/node11.html
+	// see http://tldp.org/LDP/lpg/node11.html
 	int fds[2];
 	
 	if (pipe(fds) < 0) {
-		printf("Error piping\n");
+		printf("MCS_handlePlayItem: Error piping\n");
 		exit(1);
 	}
 
 	int pid = fork();
 	
 	if (pid < 0) {
-		printf("Failed to fork\n");
+		printf("MCS_handlePlayItem: Failed to fork\n");
 		exit(1);
 	}
 
@@ -310,7 +309,7 @@ void MCS_handleRequest(struct MCS_Context* mcc, int clientSocket) {
 	int len = read(clientSocket, buffer, SIZE);
 
 	if (len < 0) {
-		printf("Error reading from socket.\n");
+		printf("MCS_handleRequest: Error reading from socket.\n");
 		exit(1);
 	}
 
@@ -438,36 +437,36 @@ void MCS_parseDirs(struct MCS_Context* mcc) {
 	if (mcc->dirs == NULL)
 		return;
 
-	int i = 0;
+	int c = 0; // counter
 
 	// do a dry-run to determine the required list size
-	int j;
-	for (j = 0; j <	mcc->numDirs; j++) {
-		if (mcc->dirs[j] != NULL) {
-			MCS_populateList(NULL, &i, mcc->dirs[j], 1);
+	int i;
+	for (i = 0; i < mcc->numDirs; i++) {
+		if (mcc->dirs[i] != NULL) {
+			MCS_populateList(NULL, &c, mcc->dirs[i], 1);
 		}
 	}
 
-	if (i > MCS_MAX_ITEMS) {
-		i = MCS_MAX_ITEMS;
+	if (c > MCS_MAX_ITEMS) {
+		c = MCS_MAX_ITEMS;
 		printf("Item count capped to %d items.\n", MCS_MAX_ITEMS);
 	}
 
-	mcc->capacity = i;
+	mcc->capacity = c;
 	mcc->items = (struct MCS_Item**) malloc(mcc->capacity *
 			sizeof(struct MCS_Item*));
 	memset(mcc->items, 0, mcc->capacity * sizeof(struct MCS_Item*));
 
 	printf("Collecting data from:\n");
 
-	i = 0;
-	for (j = 0; j < mcc->numDirs; j++) {
-		if (mcc->dirs[j] != NULL) {
-			printf("%d %s\n", j, mcc->dirs[j]);
-			MCS_populateList(mcc, &i, mcc->dirs[j], 0);
+	c = 0;
+	for (i = 0; i < mcc->numDirs; i++) {
+		if (mcc->dirs[i] != NULL) {
+			printf("%d %s\n", i, mcc->dirs[i]);
+			MCS_populateList(mcc, &c, mcc->dirs[i], 0);
 		}
 	}
-	mcc->size = i;
+	mcc->size = c;
 	mcc->version = time(NULL);
 }
 
@@ -507,7 +506,7 @@ void MCS_populateList(struct MCS_Context* mcc, int* i, char* dirpath,
 		int pathlen = dirlen + filelen;
 
 		if (pathlen >= SIZE) {
-			printf("Buffer too small for filename. %d %d\n", pathlen, SIZE);
+			printf("MCS_populateList: Buffer too small for filename. %d %d\n", pathlen, SIZE);
 			exit(1);
 		}
 
@@ -575,7 +574,7 @@ void MCS_runServer(struct MCS_Context* mcc) {
 	int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
 
 	if (serverSocket < 0) {
-		printf("Error opening socket.\n");
+		printf("MCS_runServer: Error opening socket.\n");
 		exit(1);
 	}
 
@@ -589,7 +588,7 @@ void MCS_runServer(struct MCS_Context* mcc) {
 	if (bind(serverSocket, (struct sockaddr*) &serverAddress,
 			sizeof(serverAddress)) < 0) {
 		close(serverSocket);
-		printf("Error binding to port %d\n", mcc->port);
+		printf("MCS_runServer: Error binding to port %d\n", mcc->port);
 		return;
 	}
 
@@ -605,7 +604,7 @@ void MCS_runServer(struct MCS_Context* mcc) {
 				(struct sockaddr*) &clientAddress, &clen);
 
 		if (clientSocket < 0) {
-			printf("Error accepting connection.\n");
+			printf("MCS_runServer: Error accepting connection.\n");
 			exit(1);
 		}
 
@@ -614,7 +613,8 @@ void MCS_runServer(struct MCS_Context* mcc) {
 		MCS_handleRequest(mcc, clientSocket);
 
 		if (close(clientSocket) < 0) {
-			printf("Error closing client socket.\n");
+			printf("MCS_runServer: Error closing client socket.\n");
+			exit(1);
 		}
 
 		// the idea is to update the item list without closing the socket
@@ -628,11 +628,11 @@ void MCS_runServer(struct MCS_Context* mcc) {
 		}
 	}
 
-	// kills the child process if there is one
+	// kill the child process if there is one
 	MCS_handleKillChild(mcc);
 
 	if (close(serverSocket) < 0) {
-		printf("Error closing server socket.\n");
+		printf("MCS_runServer: Error closing server socket.\n");
 		exit(1);
 	}
 
@@ -670,7 +670,7 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 			MCS_MSG_OK, mcc->version, type, offset, length);
 	
 	if (plen < 0) {
-		printf("Error writing to buffer\n");
+		printf("MCS_sendItems: Error writing to buffer\n");
 		exit(1);
 	}
 
@@ -707,7 +707,7 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 				item->type, item->label);
 
 		if (plen < 0) {
-			printf("Error writing to buffer\n");
+			printf("MCS_sendItems: Error writing to buffer\n");
 			exit(1);
 		}
 
@@ -729,7 +729,7 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 	printf(">> %d %d\n", plen, buffend - buffp);
 #endif	
 	if (plen < 0) {
-		printf("Error writing to buffer\n");
+		printf("MCS_sendItems: Error writing to buffer\n");
 		exit(1);
 	}
 
@@ -745,7 +745,7 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 	*buffp = '\0';
 
 	if (write(clientSocket, buffer, buffp - buffer) < 0) {
-		printf("Error writing to socket.\n");
+		printf("MCS_sendItems: Error writing to socket.\n");
 		exit(1);
 	}
 
@@ -780,7 +780,7 @@ int MCS_sendStatus(struct MCS_Context* mcc, int clientSocket) {
 
 	if (len > SIZE) {
 		write(clientSocket, MCS_MSG_TOO_LONG, strlen(MCS_MSG_TOO_LONG));
-		printf("Status buffer size too small %d. Needed %d\n", SIZE, len);
+		printf("MCS_sendStatus: Buffer size too small %d. Needed %d\n", SIZE, len);
 		free(buffer);
 		return -1;
 	}
