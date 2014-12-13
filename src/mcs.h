@@ -44,15 +44,25 @@
 #define MCS_STATE_SHUTDOWN 3
 
 // status codes
-#define MCS_MSG_OK              MCP_VERSION " 200 OK"
-#define MCS_MSG_BAD_REQUEST     MCP_VERSION " 401 Bad Request"
-#define MCS_MSG_BAD_PARAMS      MCP_VERSION " 402 Bad Parameters"
-#define MCS_MSG_UNAUTHORIZED    MCP_VERSION " 403 Unauthorized"
-#define MCS_MSG_SERVER_ERROR    MCP_VERSION " 500 Server Error"
-#define MCS_MSG_ITEM_PLAYING    MCP_VERSION " 501 Item Already Playing"
-#define MCS_MSG_NOT_FOUND       MCP_VERSION " 502 Not Found"
-#define MCS_MSG_TOO_LONG        MCP_VERSION " 503 Message Too Long"
-#define MCS_MSG_NOT_IMPLEMENTED MCP_VERSION " 504 Not Implemented"
+#define MCS_ERR_OK 200
+#define MCS_ERR_BAD_REQUEST 401
+#define MCS_ERR_BAD_PARAMS 402
+#define MCS_ERR_UNAUTHORIZED 403
+#define MCS_ERR_SERVER_ERROR 500
+#define MCS_ERR_ITEM_PLAYING 501
+#define MCS_ERR_NOT_FOUND 502
+#define MCS_ERR_TOO_LONG 503
+#define MCS_ERR_NOT_IMPLEMENTED 504
+
+#define MCS_MSG_OK              "OK"
+#define MCS_MSG_BAD_REQUEST     "Bad Request"
+#define MCS_MSG_BAD_PARAMS      "Bad Parameters"
+#define MCS_MSG_UNAUTHORIZED    "Unauthorized"
+#define MCS_MSG_SERVER_ERROR    "Server Error"
+#define MCS_MSG_ITEM_PLAYING    "Item Already Playing"
+#define MCS_MSG_NOT_FOUND       "Not Found"
+#define MCS_MSG_TOO_LONG        "Message Too Long"
+#define MCS_MSG_NOT_IMPLEMENTED "Not Implemented"
 
 struct MCS_Item {
 	unsigned int id;

@@ -217,7 +217,8 @@ Command
 Implementation
     MCS_handleRequest
 Description
-    Plays the item with the given ID
+    Plays the item with the given ID. If an item is still playing, you need to
+	explicitely stop it by using the STOP command.
 
 
 Command
@@ -271,8 +272,6 @@ Implementation
 Description
     Stops the currently playing item. This includes killing the child process
     that is executing the video player/audio player/etc. binary.
-    You always need to send a STOP when you are finished with an item.
-    If unsure, send a STOP before the next PLAY.
 
 
 Status Codes
@@ -283,12 +282,12 @@ Message                     Command
 200 OK                      any
 400 Client Error
 401 Bad Request             any unknown or incomplete request
-402 Bad Parameters          INFO, LIST, PLAY
+402 Bad Parameters          LIST
 403 Unauthorized            RESTART, SHUTDOWN
-500 Server Error            CTRL, INFO, PLAY, STOP
+500 Server Error            any
 501 Item Already Playing    PLAY
 502 Not Found               INFO, PLAY
-503 Message Too Long        INFO, LIST
+503 Message Too Long        INFO, LIST, STAT
 504 Not Implemented         any
 
 

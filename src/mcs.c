@@ -4,6 +4,8 @@
 #include "mcs_taglib.h"
 #endif
 
+static int invokeKillChild = 0;
+
 #ifdef MCS_DEBUG
 int MCS_checkIDs(struct MCS_Item** items, int numItems) {
 	int i, j;
@@ -36,6 +38,14 @@ long MCS_getSize(struct MCS_Context* mcc) {
 	return size; 
 }
 #endif
+
+void handle_sigchld(int sig) {
+#ifdef MCS_DEBUG
+	printf("handle_sigchld: Child process terminated.\n");
+#endif
+	invokeKillChild = 1;
+}
+
 
 // SOURCE: http://www.eternallyconfuzzled.com/tuts/algorithms/jsw_tut_hashing.aspx
 unsigned int sax_hash(char* msg, int len, int modn) {
@@ -135,34 +145,49 @@ int MCS_getItemType(char* filename) {
 int MCS_handleKillChild(struct MCS_Context* mcc) {
 	// if fork wasn't called
 	if (mcc->child == 0)
-		return 0;
+		return MCS_ERR_OK;
 
 	// close pipe to child process
 	close(mcc->wpipe);
 	mcc->wpipe = 0;
 
+	int d = 0;
+	char* method[] = { "SIGINT", "SIGTERM", "SIGKILL" };
+
 	if (kill(-mcc->child, SIGINT) < 0) {
 		if (kill(-mcc->child, SIGTERM) < 0) {
 			if (kill(-mcc->child, SIGKILL) < 0) {
 				printf("Process %d could not be killed\n", mcc->child);
-				return -1;
+				return MCS_ERR_SERVER_ERROR;
 			} else {
-				printf("Process %d killed by SIGKILL\n", mcc->child);
+				d = 2;
 			}
 		} else {
-			printf("Process %d killed by SIGTERM\n", mcc->child);
+			d = 1;
 		}
 	} else {
-		printf("Process %d killed by SIGINT\n", mcc->child);
+		d = 0;
 	}
 
-	wait(0); // collect zombies
+	int status;
+	wait(&status); // collect zombies
+
+	printf("Process %d killed by %s. (status: %d exited: %s)\n", mcc->child,
+			method[d], WEXITSTATUS(status),
+			WIFEXITED(status) ? "true" : "false");
 
 	// after this point the child should not exist anymore
 	mcc->child = 0;
 	mcc->playingItem = NULL;
 
-	return 0;
+	// keep in mind that invokeKillChild will be set even if the STOP
+	// command was called, so we need to set it to false at this point
+	// ALTERNATIVE:
+	// block the signal for STOP and unblock it (we would have to pass the
+	// sigset_t in the MCS_Context for that)
+	invokeKillChild = 0;
+
+	return MCS_ERR_OK;
 }
 
 int MCS_handlePlayItem(struct MCS_Context* mcc, struct MCS_Item* item) {
@@ -171,7 +196,7 @@ int MCS_handlePlayItem(struct MCS_Context* mcc, struct MCS_Item* item) {
 	// don't pipe and fork
 	if (access(item->filepath, F_OK) < 0) {
 		printf("File does not exist: %s\n", item->filepath);
-		return -1;
+		return MCS_ERR_NOT_FOUND;
 	}
 
 	// create a pipe so that we can pass commands to the child process
@@ -180,14 +205,14 @@ int MCS_handlePlayItem(struct MCS_Context* mcc, struct MCS_Item* item) {
 	
 	if (pipe(fds) < 0) {
 		printf("MCS_handlePlayItem: Error piping\n");
-		exit(1);
+		return MCS_ERR_SERVER_ERROR;
 	}
 
 	int pid = fork();
 	
 	if (pid < 0) {
 		printf("MCS_handlePlayItem: Failed to fork\n");
-		exit(1);
+		return MCS_ERR_SERVER_ERROR;
 	}
 
 	if (pid == 0) {
@@ -299,7 +324,7 @@ int MCS_handlePlayItem(struct MCS_Context* mcc, struct MCS_Item* item) {
 		mcc->child = pid;
 	}
 
-	return 0;	
+	return MCS_ERR_OK;
 }
 
 void MCS_handleRequest(struct MCS_Context* mcc, int clientSocket) {
@@ -310,10 +335,12 @@ void MCS_handleRequest(struct MCS_Context* mcc, int clientSocket) {
 
 	if (len < 0) {
 		printf("MCS_handleRequest: Error reading from socket.\n");
-		exit(1);
+		free(buffer);
+		return;
 	}
 
 	if (len == 0) {
+		printf("MCS_handleRequest: Empty string.\n");
 		free(buffer);
 		return;
 	}
@@ -322,17 +349,19 @@ void MCS_handleRequest(struct MCS_Context* mcc, int clientSocket) {
 	buffer[len] = '\0';
 	printf("%s (%d)\n", buffer, len);
 
+	int statusCode = 0;
+
 	if (strncmp("CTRL ", buffer, 5) == 0 && len == 6) {
 		if (mcc->wpipe == 0) {
-			write(clientSocket, MCS_MSG_SERVER_ERROR, strlen(MCS_MSG_SERVER_ERROR));
+			statusCode = MCS_ERR_SERVER_ERROR;
 			goto free_and_return;
 		}
 
 		// only send one char at a time through the pipe
 		if (write(mcc->wpipe, buffer + 5, 1) < 0) {
-			write(clientSocket, MCS_MSG_SERVER_ERROR, strlen(MCS_MSG_SERVER_ERROR));
+			statusCode = MCS_ERR_SERVER_ERROR;
 		} else {
-			write(clientSocket, MCS_MSG_OK, strlen(MCS_MSG_OK));
+			statusCode = MCS_ERR_OK;
 		}
 	} else if (strncmp("INFO ", buffer, 5) == 0 && len > 5) {
 		int itemID = atoi(buffer + 5);
@@ -340,27 +369,23 @@ void MCS_handleRequest(struct MCS_Context* mcc, int clientSocket) {
 		struct MCS_Item* item = MCS_lookupItem(mcc->items, mcc->size, itemID);
 
 		if (item == NULL) {
-			write(clientSocket, MCS_MSG_NOT_FOUND, strlen(MCS_MSG_NOT_FOUND));
+			statusCode = MCS_ERR_NOT_FOUND;
 			goto free_and_return;
 		}
 
-		if (MCS_sendInfo(item, clientSocket) < 0) {
-			write(clientSocket, MCS_MSG_SERVER_ERROR, strlen(MCS_MSG_SERVER_ERROR));
-		} else {
-			write(clientSocket, MCS_MSG_OK, strlen(MCS_MSG_OK));
-		}
+		statusCode = MCS_sendInfo(item, clientSocket);
 	} else if (strncmp("LIST ", buffer, 5) == 0 && len > 5) {
 		int type, offset, length;
 
 		if (sscanf(buffer, "LIST %d %d %d", &type, &offset, &length) != 3) {
-			write(clientSocket, MCS_MSG_BAD_REQUEST, strlen(MCS_MSG_BAD_REQUEST));
+			statusCode = MCS_ERR_BAD_REQUEST;
 			goto free_and_return;
 		}
 
-		MCS_sendItems(mcc, type, offset, length, clientSocket);
+		statusCode = MCS_sendItems(mcc, type, offset, length, clientSocket);
 	} else if (strncmp("PLAY ", buffer, 5) == 0 && len > 5) {
 		if (mcc->child != 0 || mcc->playingItem != NULL) {
-			write(clientSocket, MCS_MSG_ITEM_PLAYING, strlen(MCS_MSG_ITEM_PLAYING));
+			statusCode = MCS_ERR_ITEM_PLAYING;
 			goto free_and_return;
 		}
 
@@ -369,50 +394,87 @@ void MCS_handleRequest(struct MCS_Context* mcc, int clientSocket) {
 		struct MCS_Item* item = MCS_lookupItem(mcc->items, mcc->size, itemID);
 
 		if (item == NULL) {
-			write(clientSocket, MCS_MSG_NOT_FOUND, strlen(MCS_MSG_NOT_FOUND));
+			statusCode = MCS_ERR_NOT_FOUND;
 			goto free_and_return;
 		}
 
-		if (MCS_handlePlayItem(mcc, item) < 0) {
-			write(clientSocket, MCS_MSG_SERVER_ERROR, strlen(MCS_MSG_SERVER_ERROR));
-		} else {
-			write(clientSocket, MCS_MSG_OK, strlen(MCS_MSG_OK));
-		}
+		statusCode = MCS_handlePlayItem(mcc, item);
 	} else if (strncmp("RESTART ", buffer, 8) == 0 && len > 8) {
 		char* p = strchr(buffer, ' ');
 
 		if (len != (8 + strlen(MCS_ADMIN_KEY))
 				|| strncmp(p + 1, MCS_ADMIN_KEY, strlen(MCS_ADMIN_KEY)) != 0) {
-			write(clientSocket, MCS_MSG_UNAUTHORIZED, strlen(MCS_MSG_UNAUTHORIZED));
+			statusCode = MCS_ERR_UNAUTHORIZED;
 			goto free_and_return;
 		}
 
-		write(clientSocket, MCS_MSG_OK, strlen(MCS_MSG_OK));
 		mcc->state = MCS_STATE_RESTART;
+		statusCode = MCS_ERR_OK;
 	} else if (strncmp("SHUTDOWN ", buffer, 9) == 0 && len > 9) {
 		char* p = strchr(buffer, ' ');
 
 		if (len != (9 + strlen(MCS_ADMIN_KEY))
 				|| strncmp(p + 1, MCS_ADMIN_KEY, strlen(MCS_ADMIN_KEY)) != 0) {
-			write(clientSocket, MCS_MSG_UNAUTHORIZED, strlen(MCS_MSG_UNAUTHORIZED));
+			statusCode = MCS_ERR_UNAUTHORIZED;
 			goto free_and_return;
 		} 
 
-		write(clientSocket, MCS_MSG_OK, strlen(MCS_MSG_OK));
 		mcc->state = MCS_STATE_SHUTDOWN;
-	} else if (strncmp("STAT", buffer, 4) == 0) {
-		MCS_sendStatus(mcc, clientSocket);
-	} else if (strncmp("STOP", buffer, 4) == 0) {
-		if (MCS_handleKillChild(mcc) < 0) {
-			write(clientSocket, MCS_MSG_SERVER_ERROR, strlen(MCS_MSG_SERVER_ERROR));
-		} else {
-			write(clientSocket, MCS_MSG_OK, strlen(MCS_MSG_OK));
-		}
+		statusCode = MCS_ERR_OK;
+	} else if (strncmp("STAT", buffer, 4) == 0 && len == 4) {
+		statusCode = MCS_sendStatus(mcc, clientSocket);
+	} else if (strncmp("STOP", buffer, 4) == 0 && len == 4) {
+		statusCode = MCS_handleKillChild(mcc);
 	} else {
-		write(clientSocket, MCS_MSG_BAD_REQUEST, strlen(MCS_MSG_BAD_REQUEST));
+		statusCode = MCS_ERR_BAD_REQUEST;
 	}
 
 free_and_return:
+	switch (statusCode) {
+	case MCS_ERR_OK:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_OK, MCS_MSG_OK);
+		break;
+	case MCS_ERR_BAD_REQUEST:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_BAD_REQUEST, MCS_MSG_BAD_REQUEST);
+		break;
+	case MCS_ERR_BAD_PARAMS:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_BAD_PARAMS, MCS_MSG_BAD_PARAMS);
+		break;
+	case MCS_ERR_UNAUTHORIZED:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_UNAUTHORIZED, MCS_MSG_UNAUTHORIZED);
+		break;
+	case MCS_ERR_SERVER_ERROR:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_SERVER_ERROR, MCS_MSG_SERVER_ERROR); 
+		break;
+	case MCS_ERR_ITEM_PLAYING:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_ITEM_PLAYING, MCS_MSG_ITEM_PLAYING);
+		break;
+	case MCS_ERR_NOT_FOUND:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_NOT_FOUND, MCS_MSG_NOT_FOUND);
+		break;
+	case MCS_ERR_TOO_LONG:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_TOO_LONG, MCS_MSG_TOO_LONG);
+		break;
+	case MCS_ERR_NOT_IMPLEMENTED:
+		sprintf(buffer, "%s %d %s", MCP_VERSION, MCS_ERR_NOT_IMPLEMENTED, MCS_MSG_NOT_IMPLEMENTED);
+		break;
+	case -1:
+		printf("MCS_handleRequest: Default error type\n");
+		break;
+	case 0:
+		printf("MCS_handleRequest: Undefined error type\n");
+		break;
+	default:
+		printf("MCS_handleRequest: Unkown error type\n");
+		exit(1);
+	}
+
+	if (statusCode != 0 && statusCode != -1) {
+		if (write(clientSocket, buffer, strlen(buffer)) < 0) {
+			printf("MCS_handleRequest: Could not write to socket\n");
+		}
+	}
+
 	free(buffer);
 }
 
@@ -608,6 +670,13 @@ void MCS_runServer(struct MCS_Context* mcc) {
 			exit(1);
 		}
 
+		// if the child process has exited and signaled SIGCHLD to the
+		// parent, the signal handler has set invokeKillChild to true
+		if (invokeKillChild) {
+			MCS_handleKillChild(mcc);
+			invokeKillChild = 0;
+		}
+
 		printf("Handling client %s\n", inet_ntoa(clientAddress.sin_addr));
 
 		MCS_handleRequest(mcc, clientSocket);
@@ -644,8 +713,7 @@ int MCS_sendInfo(struct MCS_Item* item,	int clientSocket) {
 #ifdef MCS_TAGLIB
 	return MCS_sendTagLibInfo(item, clientSocket);
 #else
-	write(clientSocket, MCS_MSG_NOT_IMPLEMENTED, strlen(MCS_MSG_NOT_IMPLEMENTED));
-	return 0; 
+	return MCS_ERR_NOT_IMPLEMENTED; 
 #endif
 }
 
@@ -653,9 +721,12 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 		int clientSocket) {
 	if (type < 0 || offset < 0 || length < 1 || offset >= mcc->size
 			|| length > MCS_MAX_ITEMS) {
-		write(clientSocket, MCS_MSG_BAD_PARAMS, strlen(MCS_MSG_BAD_PARAMS));
-		return -1;
+		return MCS_ERR_BAD_PARAMS;
 	}
+
+	// FIXME there is explicit type check. if the type does not exist then
+	// send an XML string with no items. nothing criticial, but returning
+	// a proper status code would be better
 
 	const int SIZE = 10000;
 	char* buffer = (char*) malloc((SIZE + 1) * sizeof(char));
@@ -664,14 +735,16 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 	char* buffend = buffer + SIZE;
 
 	int plen = snprintf(buffp, SIZE,
-			"%s\n\n"
+			"%s %d %s\n\n"
 			"<mediacenter>"
 			"<items version=\"%d\" type=\"%d\" offset=\"%d\" length=\"%d\">",
-			MCS_MSG_OK, mcc->version, type, offset, length);
+			MCP_VERSION, MCS_ERR_OK, MCS_MSG_OK,
+			mcc->version, type, offset, length);
 	
 	if (plen < 0) {
 		printf("MCS_sendItems: Error writing to buffer\n");
-		exit(1);
+		free(buffer);
+		return MCS_ERR_SERVER_ERROR;
 	}
 
 	buffp += plen;
@@ -708,16 +781,16 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 
 		if (plen < 0) {
 			printf("MCS_sendItems: Error writing to buffer\n");
-			exit(1);
+			free(buffer);
+			return MCS_ERR_SERVER_ERROR;
 		}
 
 		buffp += plen;
 
 		if (buffp > buffend) {
-			write(clientSocket, MCS_MSG_TOO_LONG, strlen(MCS_MSG_TOO_LONG));
 			printf("MCS_sendItems: Buffer too small\n");
 			free(buffer);
-			return -1;
+			return MCS_ERR_TOO_LONG;
 		}
 
 		// count down number of items
@@ -730,27 +803,28 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 #endif	
 	if (plen < 0) {
 		printf("MCS_sendItems: Error writing to buffer\n");
-		exit(1);
+		free(buffer);
+		return MCS_ERR_SERVER_ERROR;
 	}
 
 	buffp += plen;
 
 	if (buffp > buffend) {
-		write(clientSocket, MCS_MSG_TOO_LONG, strlen(MCS_MSG_TOO_LONG));
 		printf("MCS_sendItems: Buffer too small\n");
 		free(buffer);
-		return -1;
+		return MCS_ERR_TOO_LONG;
 	}
 
 	*buffp = '\0';
 
 	if (write(clientSocket, buffer, buffp - buffer) < 0) {
 		printf("MCS_sendItems: Error writing to socket.\n");
-		exit(1);
+		free(buffer);
+		return -1;
 	}
 
 	free(buffer);
-	return 0;
+	return MCS_ERR_OK;
 }
 
 int MCS_sendStatus(struct MCS_Context* mcc, int clientSocket) {
@@ -758,7 +832,7 @@ int MCS_sendStatus(struct MCS_Context* mcc, int clientSocket) {
 	char* buffer = (char*) malloc((SIZE + 1) * sizeof(char));
 
 	int len = snprintf(buffer, SIZE,
-			"%s\n\n"
+			"%s %d %s\n\n"
 			"<mediacenter><status>"
 			"<items version=\"%d\" size=\"%d\"/>"
 			"<types>"
@@ -769,20 +843,20 @@ int MCS_sendStatus(struct MCS_Context* mcc, int clientSocket) {
 			"<type id=\"%d\" name=\"video\"/>"
 			"</types>"
 			"</status></mediacenter>",
-			MCS_MSG_OK, mcc->version, mcc->size,
-			MCS_TYPE_AUDIO, MCS_TYPE_ROM, MCS_TYPE_ROM_GB,
-			MCS_TYPE_ROM_NES, MCS_TYPE_VIDEO);
+			MCP_VERSION, MCS_ERR_OK, MCS_MSG_OK,
+			mcc->version, mcc->size, MCS_TYPE_AUDIO, MCS_TYPE_ROM,
+			MCS_TYPE_ROM_GB, MCS_TYPE_ROM_NES, MCS_TYPE_VIDEO);
 
 	if (len < 0) {
 		printf("MCS_sendStatus: Failed to write to buffer\n");
-		exit(1);
+		free(buffer);
+		return MCS_ERR_SERVER_ERROR;
 	}
 
 	if (len > SIZE) {
-		write(clientSocket, MCS_MSG_TOO_LONG, strlen(MCS_MSG_TOO_LONG));
 		printf("MCS_sendStatus: Buffer size too small %d. Needed %d\n", SIZE, len);
 		free(buffer);
-		return -1;
+		return MCS_ERR_TOO_LONG;
 	}
 
 	buffer[len] = '\0';
@@ -794,13 +868,24 @@ int MCS_sendStatus(struct MCS_Context* mcc, int clientSocket) {
 	}
 	
 	free(buffer);
-	return 0;
+	return MCS_ERR_OK;
 }
 
 int main(int argc, char* argv[]) {
 	if (argc <= 1) {
 		printf("Not enough arguments provided\n");
 		return -1;
+	}
+
+	// register SIGCHLD handler
+	struct sigaction sa;
+	sa.sa_handler = &handle_sigchld;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART | SA_NOCLDSTOP;
+
+	if (sigaction(SIGCHLD, &sa, 0) < 0) {
+		printf("Failed to register SIGCHLD handler\n");
+		exit(1);
 	}
 
 	struct MCS_Context* mcc = MCS_createContext();
