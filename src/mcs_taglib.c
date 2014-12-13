@@ -126,5 +126,5 @@ int MCS_sendTagLibInfo(struct MCS_Item* item, int clientSocket) {
 	}
 
 	free(buffer);
-	return MCS_ERR_OK;
+	return 0; // 200 OK was sent with buffer
 }

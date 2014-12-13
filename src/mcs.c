@@ -462,7 +462,7 @@ free_and_return:
 		printf("MCS_handleRequest: Default error type\n");
 		break;
 	case 0:
-		printf("MCS_handleRequest: Undefined error type\n");
+		// everything OK, don't write to socket
 		break;
 	default:
 		printf("MCS_handleRequest: Unkown error type\n");
@@ -681,7 +681,11 @@ void MCS_runServer(struct MCS_Context* mcc) {
 
 		MCS_handleRequest(mcc, clientSocket);
 
-		if (close(clientSocket) < 0) {
+		// at this point, the forked process has a copy of the file
+		// descriptor and the socket will not be closed with a regular close
+		// call. shutdown will definitely mark the socket as closed.
+		// SOURCE: http://docstore.mik.ua/orelly/perl/cookbook/ch17_10.htm
+		if (shutdown(clientSocket, 2) < 0) {
 			printf("MCS_runServer: Error closing client socket.\n");
 			exit(1);
 		}
@@ -824,7 +828,7 @@ int MCS_sendItems(struct MCS_Context* mcc, int type, int offset, int length,
 	}
 
 	free(buffer);
-	return MCS_ERR_OK;
+	return 0; // 200 OK was sent with buffer
 }
 
 int MCS_sendStatus(struct MCS_Context* mcc, int clientSocket) {
@@ -868,7 +872,7 @@ int MCS_sendStatus(struct MCS_Context* mcc, int clientSocket) {
 	}
 	
 	free(buffer);
-	return MCS_ERR_OK;
+	return 0; // 200 OK was sent with buffer
 }
 
 int main(int argc, char* argv[]) {
