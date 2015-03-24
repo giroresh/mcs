@@ -842,8 +842,8 @@ int MCS_sendStatus(struct MCS_Context* mcc, int clientSocket) {
 			"<types>"
 			"<type id=\"%d\" name=\"audio\"/>"
 			"<type id=\"%d\" name=\"rom\"/>"
-			"<type id=\"%d\" name=\"rom/gb\">"
-			"<type id=\"%d\" name=\"rom/nes\">"
+			"<type id=\"%d\" name=\"rom/gb\"/>"
+			"<type id=\"%d\" name=\"rom/nes\"/>"
 			"<type id=\"%d\" name=\"video\"/>"
 			"</types>"
 			"</status></mediacenter>",
